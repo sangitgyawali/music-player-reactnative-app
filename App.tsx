@@ -5,732 +5,229 @@ import {
   View,
   TouchableOpacity,
   FlatList,
-  Alert,
   Dimensions,
-  Switch, // NEW IMPORT for Settings
-  ScrollView, // NEW IMPORT for Settings
+  Switch,
+  SafeAreaView,
 } from "react-native";
 import { useEffect, useState, useMemo } from "react";
-import * as Audio from "expo-audio";
-import * as MediaLibrary from "expo-media-library";
+import { Audio } from "expo-av";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import Slider from "@react-native-community/slider";
 import { TabView, SceneMap, TabBar } from "react-native-tab-view";
 
-// --- MOCKING ASYNC STORAGE FOR THEME PERSISTENCE ---
-// In a real app, you would use '@react-native-async-storage/async-storage'
-const mockAsyncStorage = {
-  getTheme: async () => {
-    // Simulate reading saved theme
-    return Math.random() < 0.5 ? "dark" : "light"; // Random start
-  },
-  saveTheme: async (theme) => {
-    // Simulate saving theme
-    console.log(`Simulating saving theme: ${theme}`);
-  },
-};
-
 /* --------------------------
-   TYPE DEFINITIONS
+   TYPES & MOCK DATA
 --------------------------- */
-type MusicFile = {
-  id: string;
-  filename: string;
-  uri: string;
-  duration: number; // Duration in seconds
-};
-
+type MusicFile = { id: string; filename: string; artist: string; uri: string; duration: number };
 type ColorScheme = "dark" | "light";
 
-// Define the root styles to use a variable for easy switching
-const COLORS = {
-  dark: {
-    background: "#0d0d0e",
-    surface: "#161616",
-    surfaceHighlight: "#1f2a38",
-    accent: "#4A90E2", // Blue
-    danger: "#E74C3C", // Red
-    text: "#fff",
-    textMuted: "#999",
-    textSubtle: "#777",
-    textAccent: "#cce6ff",
-    border: "#222",
-  },
-  light: {
-    background: "#f0f2f5",
-    surface: "#ffffff",
-    surfaceHighlight: "#e5f1ff",
-    accent: "#007AFF", // System Blue
-    danger: "#FF3B30",
-    text: "#000",
-    textMuted: "#555",
-    textSubtle: "#aaa",
-    textAccent: "#004799",
-    border: "#ddd",
-  },
-};
+const MOCK_MUSIC: MusicFile[] = [
+  { id: "1", filename: "Midnight City", artist: "Synthwave Pro", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", duration: 360 },
+  { id: "2", filename: "Ocean Breeze", artist: "Lo-Fi Girl", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", duration: 300 },
+  { id: "3", filename: "Neon Dreams", artist: "Retro Kid", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", duration: 420 },
+];
 
-const initialLayout = { width: Dimensions.get("window").width };
+const { width } = Dimensions.get("window");
 
 /* --------------------------
-   UTILITY
+   STYLES & THEME
 --------------------------- */
-const formatDuration = (ms: number | undefined): string => {
-  if (!ms) return "00:00";
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+const COLORS = {
+  dark: { bg: "#09090B", surface: "#18181B", accent: "#8B5CF6", text: "#FAFAFA", muted: "#A1A1AA", border: "#27272A" },
+  light: { bg: "#F4F4F5", surface: "#FFFFFF", accent: "#7C3AED", text: "#18181B", muted: "#71717A", border: "#E4E4E7" },
 };
 
-// Helper function to get the current set of styles based on theme
-const getThemedStyles = (theme: ColorScheme) => {
-  const currentColors = COLORS[theme];
-  const isDark = theme === "dark";
-
+const getStyles = (theme: ColorScheme) => {
+  const c = COLORS[theme];
   return StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: currentColors.background,
-      paddingTop: 50,
-    },
-    header: {
-      fontSize: 28,
-      fontWeight: "bold",
-      color: currentColors.accent,
-      textAlign: "center",
-      marginBottom: 10,
-    },
-    scene: {
-      flex: 1,
-      backgroundColor: currentColors.background,
-    },
-    centerScene: {
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-      paddingHorizontal: 20,
-    },
-    infoText: {
-      marginTop: 15,
-      color: currentColors.text,
-      fontSize: 16,
-      textAlign: "center",
-      lineHeight: 24,
-    },
-    subText: {
-        color: currentColors.textSubtle,
-        fontSize: 14,
-        textAlign: 'center',
-        marginTop: 5,
-    },
+    container: { flex: 1, backgroundColor: c.bg },
+    header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 10 },
+    headerText: { fontSize: 28, fontWeight: "800", color: c.text, letterSpacing: -0.5 },
+    
+    tabBar: { backgroundColor: c.bg, elevation: 0, shadowOpacity: 0, borderBottomWidth: 1, borderBottomColor: c.border },
+    indicator: { backgroundColor: c.accent, height: 3, borderRadius: 3 },
+    label: { fontWeight: "700", textTransform: "capitalize", fontSize: 14 },
 
-    /* PERMISSION STYLES */
-    permissionNote: {
-      color: currentColors.textMuted,
-      fontSize: 14,
-      textAlign: 'center',
-      marginBottom: 20,
-      marginTop: 10,
-      lineHeight: 20,
-      fontWeight: '500',
-    },
-    permissionButton: {
-      backgroundColor: currentColors.accent,
-      paddingVertical: 12,
-      paddingHorizontal: 30,
-      borderRadius: 8,
-      marginTop: 20,
-    },
-    permissionButtonText: {
-      color: isDark ? currentColors.text : currentColors.background,
-      fontSize: 16,
-      fontWeight: 'bold',
-    },
-
-    /* TAB BAR */
-    tabBar: {
-      backgroundColor: isDark ? "#121212" : "#fff",
-      borderBottomWidth: 1,
-      borderBottomColor: currentColors.border,
-    },
-    tabIndicator: {
-      backgroundColor: currentColors.accent,
-      height: 3,
-      borderRadius: 10,
-    },
-
-    /* TRACK LIST */
-    listContainer: {
-      paddingBottom: 200,
-    },
-    trackItem: {
+    trackCard: {
       flexDirection: "row",
       alignItems: "center",
-      backgroundColor: currentColors.surface,
-      padding: 14,
+      backgroundColor: c.surface,
+      marginHorizontal: 16,
       marginVertical: 6,
-      marginHorizontal: 10,
-      borderRadius: 10,
-      shadowColor: isDark ? "#000" : "#000",
-      shadowOpacity: isDark ? 0.4 : 0.1,
-      shadowOffset: { width: 0, height: 2 },
-      shadowRadius: 4,
-      elevation: 4,
-    },
-    currentTrack: {
-      backgroundColor: currentColors.surfaceHighlight,
-      borderColor: currentColors.accent,
+      padding: 12,
+      borderRadius: 16,
       borderWidth: 1,
+      borderColor: c.border,
     },
-    trackInfo: {
-      marginLeft: 15,
-      flex: 1,
-    },
-    fileName: {
-      fontSize: 17,
-      fontWeight: "600",
-      color: currentColors.text,
-    },
-    duration: {
-      fontSize: 12,
-      marginTop: 3,
-      color: currentColors.textSubtle,
-    },
-    currentTrackText: { color: currentColors.text },
-    currentTrackSubText: { color: currentColors.textAccent },
-    accentColor: { color: currentColors.accent },
+    activeTrack: { borderColor: c.accent, backgroundColor: theme === 'dark' ? "#1E1B4B" : "#F5F3FF" },
+    albumArt: { width: 48, height: 48, borderRadius: 12, backgroundColor: c.accent + "20", justifyContent: "center", alignItems: "center" },
+    info: { marginLeft: 15, flex: 1 },
+    title: { color: c.text, fontSize: 16, fontWeight: "700" },
+    artist: { color: c.muted, fontSize: 13, marginTop: 2 },
 
-    // MINI PLAYER
     miniPlayer: {
       position: "absolute",
-      bottom: 0,
-      width: "100%",
-      backgroundColor: isDark ? "#121212" : "#fff",
-      padding: 15,
-      borderTopWidth: 2,
-      borderTopColor: currentColors.accent,
-    },
-    playerBarTitle: {
-      color: currentColors.text,
-      fontWeight: "600",
-      fontSize: 16,
-      textAlign: "center",
-    },
-    progressContainer: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginTop: 8,
-    },
-    timeText: {
-      color: currentColors.textMuted,
-      fontSize: 12,
-    },
-    controls: {
-      marginTop: 12,
-      flexDirection: "row",
-      justifyContent: "space-around",
-      alignItems: "center",
-    },
-    playPauseButton: {
-      width: 65,
-      height: 65,
-      borderRadius: 40,
-      backgroundColor: currentColors.accent,
-      justifyContent: "center",
-      alignItems: "center",
-      shadowColor: currentColors.accent,
-      shadowOpacity: 0.8,
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 10,
+      bottom: 20,
+      left: 10,
+      right: 10,
+      backgroundColor: c.surface,
+      borderRadius: 24,
+      padding: 16,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.3,
+      shadowRadius: 20,
       elevation: 10,
+      borderWidth: 1,
+      borderColor: c.border,
     },
-    noTrackBar: {
-      position: "absolute",
-      bottom: 0,
-      width: "100%",
-      backgroundColor: isDark ? "#181818" : "#fff",
-      padding: 20,
-      alignItems: "center",
-      borderTopWidth: 1,
-      borderTopColor: currentColors.border,
-    },
-    noTrackText: {
-      color: currentColors.textMuted,
-      fontSize: 15,
-      fontWeight: "500",
-    },
+    slider: { width: "105%", height: 20, alignSelf: 'center' },
+    controls: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 5 },
+    playBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: c.accent, justifyContent: "center", alignItems: "center" },
     
-    // SETTINGS STYLES
-    settingsContainer: {
-        padding: 20,
-    },
-    settingItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: currentColors.border,
-    },
-    settingText: {
-        fontSize: 17,
-        color: currentColors.text,
-        fontWeight: '500',
-    },
-    settingSubText: {
-        fontSize: 12,
-        color: currentColors.textSubtle,
-        marginTop: 2,
-    },
-    settingLink: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    }
+    settingsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '90%', padding: 20, backgroundColor: c.surface, borderRadius: 15, marginTop: 20 },
   });
 };
 
-
 /* --------------------------
-   SCREEN COMPONENTS
---------------------------- */
-
-// *** Permission Denied Screen ***
-const PermissionScreen = ({ styles, requestPermission }) => (
-  <View style={styles.centerScene}>
-    <Text style={styles.header}>Offline Music Player</Text>
-    <Text style={styles.permissionNote}>
-      **CRITICAL NOTE**: Reading local files requires storage permission. 
-      {"\n"}
-      Also, you **must** run this using a **Development Build** (`npx expo run android`).
-    </Text>
-    <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-      <Text style={styles.permissionButtonText}>Refresh/Grant Permission</Text>
-    </TouchableOpacity>
-    <Ionicons name="warning" size={100} color={COLORS.dark.danger} style={{marginTop: 30}} />
-  </View>
-);
-
-// *** All Songs Screen ***
-const AllSongsRoute = ({
-  musicFiles,
-  currentTrackIndex,
-  isPlaying,
-  playTrack,
-  togglePlayPause,
-  styles, // Passed styles
-}) => {
-  const renderItem = ({ item, index }) => {
-    const isCurrent = index === currentTrackIndex;
-    const iconName = isCurrent && isPlaying ? "pause-circle" : "play-circle";
-
-    return (
-      <TouchableOpacity
-        style={[styles.trackItem, isCurrent && styles.currentTrack]}
-        onPress={() => {
-          if (isCurrent) togglePlayPause();
-          else playTrack(item.uri, index);
-        }}
-      >
-        <Ionicons
-          name={iconName}
-          size={32}
-          color={isCurrent ? styles.accentColor.color : styles.textSubtle.color}
-        />
-
-        <View style={styles.trackInfo}>
-          <Text
-            style={[
-              styles.fileName,
-              isCurrent ? styles.currentTrackText : styles.fileName,
-            ]}
-            numberOfLines={1}
-          >
-            {item.filename}
-          </Text>
-          <Text
-            style={[
-              styles.duration,
-              isCurrent ? styles.currentTrackSubText : styles.duration,
-            ]}
-          >
-            {formatDuration(item.duration * 1000)}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  if (musicFiles.length === 0) {
-    return (
-      <View style={styles.centerScene}>
-        <Ionicons name="musical-notes-outline" size={80} color={styles.textSubtle.color} />
-        <Text style={styles.infoText}>
-          No music files found or permission denied.
-        </Text>
-        <Text style={styles.subText}>
-          Ensure files are on device and permissions are granted.
-        </Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.scene}>
-      <FlatList
-        data={musicFiles}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-      />
-    </View>
-  );
-};
-
-// *** Playlists Screen ***
-const PlaylistsRoute = ({ styles }) => (
-  <View style={styles.centerScene}>
-    <Ionicons name="folder-open" size={100} color={styles.accentColor.color} />
-    <Text style={styles.infoText}>
-      <Text style={{ fontWeight: "bold" }}>Playlists</Text> feature is coming soon!
-      {"\n"}
-      This is where your custom song lists will be stored.
-    </Text>
-  </View>
-);
-
-// *** Favorites Screen ***
-const FavoritesRoute = ({ styles }) => (
-  <View style={styles.centerScene}>
-    <Ionicons name="heart" size={100} color={COLORS.dark.danger} />
-    <Text style={styles.infoText}>
-      <Text style={{ fontWeight: "bold" }}>Favorites</Text> feature is coming soon!
-      {"\n"}
-      Your loved songs will appear here. (Requires AsyncStorage)
-    </Text>
-  </View>
-);
-
-// *** Settings Screen (NEW) ***
-const SettingsRoute = ({ styles, colorScheme, toggleTheme }) => (
-    <ScrollView style={styles.scene} contentContainerStyle={styles.settingsContainer}>
-        <View style={styles.settingItem}>
-            <View>
-                <Text style={styles.settingText}>Dark Mode / Light Mode</Text>
-                <Text style={styles.settingSubText}>Current: {colorScheme === 'dark' ? 'Dark' : 'Light'}</Text>
-            </View>
-            <Switch
-                trackColor={{ false: styles.textSubtle.color, true: styles.accentColor.color }}
-                thumbColor={styles.text.color}
-                ios_backgroundColor={styles.textSubtle.color}
-                onValueChange={toggleTheme}
-                value={colorScheme === 'dark'}
-            />
-        </View>
-
-        <View style={styles.settingItem}>
-            <View>
-                <Text style={styles.settingText}>Privacy Policy</Text>
-                <Text style={styles.settingSubText}>Review how your data is handled.</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={24} color={styles.textSubtle.color} />
-        </View>
-
-        <View style={styles.settingItem}>
-            <View>
-                <Text style={styles.settingText}>Terms & Conditions</Text>
-                <Text style={styles.settingSubText}>The rules for using this app.</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={24} color={styles.textSubtle.color} />
-        </View>
-
-        <View style={[styles.settingItem, { borderBottomWidth: 0 }]}>
-            <View>
-                <Text style={styles.settingText}>Contact Us</Text>
-                <Text style={styles.settingSubText}>Report a bug or ask a question.</Text>
-            </View>
-            <Ionicons name="mail-outline" size={24} color={styles.textSubtle.color} />
-        </View>
-        
-    </ScrollView>
-);
-
-/* --------------------------
-   APP (Handles Permissions & Logic)
+   COMPONENT
 --------------------------- */
 export default function App() {
-  const [musicFiles, setMusicFiles] = useState<MusicFile[]>([]);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [currentTrackIndex, setCurrentTrackIndex] = useState(-1);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [current, setCurrent] = useState(-1);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(1);
+  const [theme, setTheme] = useState<ColorScheme>("dark");
 
-  const [status, setStatus] = useState<Audio.PlaybackStatus | null>(null);
-  const [positionMillis, setPositionMillis] = useState(0);
-  const [durationMillis, setDurationMillis] = useState(1);
+  const styles = useMemo(() => getStyles(theme), [theme]);
+  const activeColor = COLORS[theme].accent;
 
-  // --- THEME STATE ---
-  const [colorScheme, setColorScheme] = useState<ColorScheme>("dark");
-  const styles = useMemo(() => getThemedStyles(colorScheme), [colorScheme]);
-  const isDark = colorScheme === "dark";
-
-  const toggleTheme = () => {
-    const newTheme = colorScheme === "dark" ? "light" : "dark";
-    setColorScheme(newTheme);
-    mockAsyncStorage.saveTheme(newTheme);
+  const play = async (index: number) => {
+    if (sound) await sound.unloadAsync();
+    const { sound: s } = await Audio.Sound.createAsync(
+      { uri: MOCK_MUSIC[index].uri },
+      { shouldPlay: true },
+      (st) => { if (st.isLoaded) { setPos(st.positionMillis); setDur(st.durationMillis || 1); } }
+    );
+    setSound(s);
+    setCurrent(index);
+    setPlaying(true);
   };
 
-  const [index, setIndex] = useState(0);
-  const [routes] = useState([
-    { key: "all", title: "All Songs", icon: "musical-notes" },
-    { key: "playlists", title: "Playlists", icon: "list-circle" },
-    { key: "favorites", title: "Favorites", icon: "heart" },
-    { key: "settings", title: "Settings", icon: "settings" }, // NEW ROUTE
-  ]);
-
-  /* --------------------
-      PERMISSIONS & LOADING
-  --------------------- */
-  
-  const getMusicFiles = async () => {
-    try {
-      const media = await MediaLibrary.getAssetsAsync({
-        mediaType: [MediaLibrary.MediaType.audio],
-        limit: 100,
-      });
-      
-      const files: MusicFile[] = media.assets.map(asset => ({
-        id: asset.id,
-        filename: asset.filename,
-        uri: asset.uri,
-        duration: asset.duration,
-      }));
-      
-      setMusicFiles(files);
-      if (files.length === 0) {
-        Alert.alert("No Files Found", "Make sure you have audio files saved on your device.");
-      }
-    } catch (error) {
-      console.error("Error fetching media library:", error);
-    }
-  };
-
-  const requestPermission = async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status === 'granted') {
-      setPermissionGranted(true);
-      getMusicFiles();
-    } else {
-      setPermissionGranted(false);
-      Alert.alert("Permission Denied", "Cannot access local music files without storage permission.");
-    }
-  };
-
-  /* --------------------
-      AUDIO LOGIC
-  --------------------- */
-
-  const onPlaybackStatusUpdate = (st: Audio.PlaybackStatus) => {
-    setStatus(st);
-    if (!st.isLoaded) return;
-
-    setPositionMillis(st.positionMillis);
-    setDurationMillis(st.durationMillis || 1);
-
-    if (st.didJustFinish) playNextTrack();
-  };
-
-  const playTrack = async (uri: string, index: number) => {
-    try {
-      if (sound) {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-      }
-
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true },
-        onPlaybackStatusUpdate
-      );
-
-      setSound(newSound);
-      setCurrentTrackIndex(index);
-      setIsPlaying(true);
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Unable to play song. Check file access permissions/URI.");
-    }
-  };
-
-  const togglePlayPause = async () => {
+  const toggle = async () => {
     if (!sound) return;
-    if (isPlaying) {
-      await sound.pauseAsync();
-      setIsPlaying(false);
-    } else {
-      await sound.playAsync();
-      setIsPlaying(true);
-    }
+    playing ? await sound.pauseAsync() : await sound.playAsync();
+    setPlaying(!playing);
   };
 
-  const playNextTrack = () => {
-    if (musicFiles.length === 0) return;
-    const next = (currentTrackIndex + 1) % musicFiles.length;
-    playTrack(musicFiles[next].uri, next);
+  const skip = (dir: number) => {
+    const nextIdx = (current + dir + MOCK_MUSIC.length) % MOCK_MUSIC.length;
+    play(nextIdx);
   };
 
-  const playPreviousTrack = () => {
-    if (musicFiles.length === 0) return;
-    const prev = (currentTrackIndex - 1 + musicFiles.length) % musicFiles.length;
-    playTrack(musicFiles[prev].uri, prev);
-  };
+  const [tabIndex, setTabIndex] = useState(0);
+  const routes = [{ key: "all", title: "Library" }, { key: "settings", title: "Settings" }];
 
-  const onSeek = (value: number) => {
-    if (sound && status?.isLoaded) {
-      // value is 0 to 1, scale it to duration
-      sound.setPositionAsync(Math.floor(value * durationMillis));
-    }
-  };
-
-  /* --------------------
-      EFFECTS
-  --------------------- */
-
-  useEffect(() => {
-    const loadInitialData = async () => {
-        // Load theme from storage
-        const savedTheme = await mockAsyncStorage.getTheme();
-        if (savedTheme === 'light' || savedTheme === 'dark') {
-            setColorScheme(savedTheme);
-        }
-        
-        // Request permissions and load files
-        requestPermission();
-    }
-    
-    loadInitialData();
-
-    return () => {
-      sound?.unloadAsync();
-    };
-  }, []);
-
-  /* --------------------
-      SCENES
-  --------------------- */
   const renderScene = SceneMap({
     all: () => (
-      <AllSongsRoute
-        musicFiles={musicFiles}
-        currentTrackIndex={currentTrackIndex}
-        isPlaying={isPlaying}
-        playTrack={playTrack}
-        togglePlayPause={togglePlayPause}
-        styles={styles}
+      <FlatList
+        data={MOCK_MUSIC}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingVertical: 20, paddingBottom: 150 }}
+        renderItem={({ item, index }) => {
+          const isActive = current === index;
+          return (
+            <TouchableOpacity 
+              style={[styles.trackCard, isActive && styles.activeTrack]} 
+              onPress={() => play(index)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.albumArt}>
+                <Ionicons name={isActive && playing ? "stats-chart" : "musical-notes"} size={24} color={activeColor} />
+              </View>
+              <View style={styles.info}>
+                <Text style={[styles.title, isActive && { color: activeColor }]}>{item.filename}</Text>
+                <Text style={styles.artist}>{item.artist}</Text>
+              </View>
+              <Ionicons name="ellipsis-horizontal" size={20} color={COLORS[theme].muted} />
+            </TouchableOpacity>
+          );
+        }}
       />
     ),
-    playlists: () => <PlaylistsRoute styles={styles} />,
-    favorites: () => <FavoritesRoute styles={styles} />,
-    settings: () => <SettingsRoute styles={styles} colorScheme={colorScheme} toggleTheme={toggleTheme} />,
+    settings: () => (
+      <View style={{ flex: 1, alignItems: 'center', paddingTop: 30 }}>
+        <View style={styles.settingsRow}>
+          <Text style={styles.title}>Dark Mode</Text>
+          <Switch 
+            value={theme === "dark"} 
+            onValueChange={() => setTheme(theme === "dark" ? "light" : "dark")}
+            trackColor={{ false: "#767577", true: activeColor }}
+          />
+        </View>
+      </View>
+    ),
   });
 
-  const renderTabBar = (props) => (
-    <TabBar
-      {...props}
-      indicatorStyle={styles.tabIndicator}
-      style={styles.tabBar}
-      renderLabel={({ route, focused }) => (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Ionicons
-            name={focused ? route.icon : route.icon + "-outline"}
-            size={18}
-            color={focused ? styles.accentColor.color : styles.textMuted.color}
-          />
-          <Text
-            style={{
-              marginLeft: 6,
-              color: focused ? styles.accentColor.color : styles.textMuted.color,
-              fontWeight: "600",
-            }}
-          >
-            {route.title}
-          </Text>
-        </View>
-      )}
-    />
-  );
-
-  /* --------------------
-      RENDER
-  --------------------- */
-
-  if (!permissionGranted) {
-    return <PermissionScreen styles={styles} requestPermission={requestPermission} />;
-  }
-
-  const currentTrack = musicFiles[currentTrackIndex];
-  
   return (
-    <View style={styles.container}>
-      {/* Use auto for dark/light mode status bar text */}
-      <StatusBar style={isDark ? "light" : "dark"} backgroundColor={isDark ? "#121212" : "#f0f2f5"} /> 
-      <Text style={styles.header}>🎧 Elite Player</Text>
+    <SafeAreaView style={styles.container}>
+      <StatusBar style={theme === "dark" ? "light" : "dark"} />
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Player</Text>
+      </View>
 
       <TabView
-        navigationState={{ index, routes }}
+        navigationState={{ index: tabIndex, routes }}
+        onIndexChange={setTabIndex}
+        initialLayout={{ width }}
+        renderTabBar={(props) => (
+          <TabBar
+            {...props}
+            style={styles.tabBar}
+            indicatorStyle={styles.indicator}
+            labelStyle={[styles.label, { color: COLORS[theme].text }]}
+            activeColor={activeColor}
+            inactiveColor={COLORS[theme].muted}
+          />
+        )}
         renderScene={renderScene}
-        onIndexChange={setIndex}
-        renderTabBar={renderTabBar}
-        initialLayout={initialLayout}
       />
 
-      {/* Mini Player */}
-      {currentTrack ? (
+      {current !== -1 && (
         <View style={styles.miniPlayer}>
-          <Text style={styles.playerBarTitle} numberOfLines={1}>
-            {currentTrack.filename}
-          </Text>
-
-          {/* PROGRESS */}
-          <View style={styles.progressContainer}>
-            <Text style={styles.timeText}>{formatDuration(positionMillis)}</Text>
-            <Slider
-              minimumValue={0}
-              maximumValue={1}
-              value={positionMillis / durationMillis}
-              onSlidingComplete={onSeek}
-              minimumTrackTintColor={styles.accentColor.color}
-              maximumTrackTintColor={isDark ? "#444" : "#ccc"}
-              thumbTintColor={styles.accentColor.color}
-              style={{ flex: 1, marginHorizontal: 8 }}
-            />
-            <Text style={styles.timeText}>{formatDuration(durationMillis)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <View style={styles.info}>
+               <Text style={styles.title} numberOfLines={1}>{MOCK_MUSIC[current].filename}</Text>
+               <Text style={styles.artist}>{MOCK_MUSIC[current].artist}</Text>
+            </View>
+            <TouchableOpacity style={styles.playBtn} onPress={toggle}>
+              <Ionicons name={playing ? "pause" : "play"} size={28} color="#fff" />
+            </TouchableOpacity>
           </View>
-
-          {/* CONTROLS */}
+          
+          <Slider
+            style={styles.slider}
+            minimumValue={0}
+            maximumValue={1}
+            value={pos / dur}
+            minimumTrackTintColor={activeColor}
+            maximumTrackTintColor={COLORS[theme].border}
+            thumbTintColor={activeColor}
+            onSlidingComplete={(v) => sound?.setPositionAsync(v * dur)}
+          />
+          
           <View style={styles.controls}>
-            <TouchableOpacity onPress={playPreviousTrack}>
-              <Ionicons name="play-skip-back" size={28} color={styles.accentColor.color} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.playPauseButton} onPress={togglePlayPause}>
-              <Ionicons
-                name={isPlaying ? "pause" : "play"}
-                size={36}
-                color={isDark ? "#fff" : styles.background.color} // Always white on dark button
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={playNextTrack}>
-              <Ionicons name="play-skip-forward" size={28} color={styles.accentColor.color} />
-            </TouchableOpacity>
+             <TouchableOpacity onPress={() => skip(-1)}>
+               <Ionicons name="play-back" size={24} color={COLORS[theme].text} />
+             </TouchableOpacity>
+             <Text style={styles.artist}>{Math.floor(pos/60000)}:{(Math.floor(pos/1000)%60).toString().padStart(2,'0')}</Text>
+             <TouchableOpacity onPress={() => skip(1)}>
+               <Ionicons name="play-forward" size={24} color={COLORS[theme].text} />
+             </TouchableOpacity>
           </View>
-        </View>
-      ) : (
-        <View style={styles.noTrackBar}>
-          <Text style={styles.noTrackText}>🎶 Tap a track to start listening</Text>
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
