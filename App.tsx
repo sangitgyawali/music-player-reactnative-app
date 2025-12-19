@@ -1,233 +1,239 @@
 import { StatusBar } from "expo-status-bar";
 import {
-  StyleSheet,
-  Text,
-  View,
-  TouchableOpacity,
-  FlatList,
-  Dimensions,
-  Switch,
-  SafeAreaView,
+  StyleSheet, Text, View, TouchableOpacity, FlatList,
+  Dimensions, Switch, SafeAreaView, Alert, Linking, ScrollView
 } from "react-native";
 import { useEffect, useState, useMemo } from "react";
 import { Audio } from "expo-av";
+import * as MediaLibrary from "expo-media-library";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import Slider from "@react-native-community/slider";
 import { TabView, SceneMap, TabBar } from "react-native-tab-view";
 
-/* --------------------------
-   TYPES & MOCK DATA
---------------------------- */
-type MusicFile = { id: string; filename: string; artist: string; uri: string; duration: number };
-type ColorScheme = "dark" | "light";
-
-const MOCK_MUSIC: MusicFile[] = [
-  { id: "1", filename: "Midnight City", artist: "Synthwave Pro", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", duration: 360 },
-  { id: "2", filename: "Ocean Breeze", artist: "Lo-Fi Girl", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3", duration: 300 },
-  { id: "3", filename: "Neon Dreams", artist: "Retro Kid", uri: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3", duration: 420 },
-];
-
 const { width } = Dimensions.get("window");
 
 /* --------------------------
-   STYLES & THEME
+   THEME DEFINITIONS
 --------------------------- */
-const COLORS = {
-  dark: { bg: "#09090B", surface: "#18181B", accent: "#8B5CF6", text: "#FAFAFA", muted: "#A1A1AA", border: "#27272A" },
-  light: { bg: "#F4F4F5", surface: "#FFFFFF", accent: "#7C3AED", text: "#18181B", muted: "#71717A", border: "#E4E4E7" },
+const THEMES = {
+  dark: { bg: "#0F0F12", header: "#4A1D65", card: "#1C1C21", accent: "#A855F7", text: "#FFFFFF", muted: "#A1A1AA", border: "#2C2C32" },
+  light: { bg: "#F8F9FA", header: "#7C3AED", card: "#FFFFFF", accent: "#7C3AED", text: "#1A1A1A", muted: "#71717A", border: "#E4E4E7" },
 };
 
-const getStyles = (theme: ColorScheme) => {
-  const c = COLORS[theme];
-  return StyleSheet.create({
-    container: { flex: 1, backgroundColor: c.bg },
-    header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 10 },
-    headerText: { fontSize: 28, fontWeight: "800", color: c.text, letterSpacing: -0.5 },
-    
-    tabBar: { backgroundColor: c.bg, elevation: 0, shadowOpacity: 0, borderBottomWidth: 1, borderBottomColor: c.border },
-    indicator: { backgroundColor: c.accent, height: 3, borderRadius: 3 },
-    label: { fontWeight: "700", textTransform: "capitalize", fontSize: 14 },
-
-    trackCard: {
-      flexDirection: "row",
-      alignItems: "center",
-      backgroundColor: c.surface,
-      marginHorizontal: 16,
-      marginVertical: 6,
-      padding: 12,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    activeTrack: { borderColor: c.accent, backgroundColor: theme === 'dark' ? "#1E1B4B" : "#F5F3FF" },
-    albumArt: { width: 48, height: 48, borderRadius: 12, backgroundColor: c.accent + "20", justifyContent: "center", alignItems: "center" },
-    info: { marginLeft: 15, flex: 1 },
-    title: { color: c.text, fontSize: 16, fontWeight: "700" },
-    artist: { color: c.muted, fontSize: 13, marginTop: 2 },
-
-    miniPlayer: {
-      position: "absolute",
-      bottom: 20,
-      left: 10,
-      right: 10,
-      backgroundColor: c.surface,
-      borderRadius: 24,
-      padding: 16,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.3,
-      shadowRadius: 20,
-      elevation: 10,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    slider: { width: "105%", height: 20, alignSelf: 'center' },
-    controls: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 5 },
-    playBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: c.accent, justifyContent: "center", alignItems: "center" },
-    
-    settingsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '90%', padding: 20, backgroundColor: c.surface, borderRadius: 15, marginTop: 20 },
-  });
-};
-
-/* --------------------------
-   COMPONENT
---------------------------- */
 export default function App() {
+  const [musicFiles, setMusicFiles] = useState<MediaLibrary.Asset[]>([]);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [current, setCurrent] = useState(-1);
-  const [playing, setPlaying] = useState(false);
-  const [pos, setPos] = useState(0);
-  const [dur, setDur] = useState(1);
-  const [theme, setTheme] = useState<ColorScheme>("dark");
+  const [currentIdx, setCurrentIdx] = useState<number>(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(1);
+  const [themeMode, setThemeMode] = useState<"dark" | "light">("dark");
+  const [tabIndex, setTabIndex] = useState(0);
 
-  const styles = useMemo(() => getStyles(theme), [theme]);
-  const activeColor = COLORS[theme].accent;
+  const colors = THEMES[themeMode];
 
-  const play = async (index: number) => {
-    if (sound) await sound.unloadAsync();
-    const { sound: s } = await Audio.Sound.createAsync(
-      { uri: MOCK_MUSIC[index].uri },
-      { shouldPlay: true },
-      (st) => { if (st.isLoaded) { setPos(st.positionMillis); setDur(st.durationMillis || 1); } }
-    );
-    setSound(s);
-    setCurrent(index);
-    setPlaying(true);
+  // 1. SCAN LOCAL STORAGE
+  useEffect(() => {
+    (async () => {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Denied", "We need access to your files to play music.");
+        return;
+      }
+      const media = await MediaLibrary.getAssetsAsync({ mediaType: "audio" });
+      setMusicFiles(media.assets);
+    })();
+  }, []);
+
+  // 2. AUDIO LOGIC
+  const playTrack = async (index: number) => {
+    if (index < 0 || index >= musicFiles.length) return;
+    try {
+      if (sound) await sound.unloadAsync();
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: musicFiles[index].uri },
+        { shouldPlay: true },
+        (status) => {
+          if (status.isLoaded) {
+            setPosition(status.positionMillis);
+            setDuration(status.durationMillis || 1);
+            if (status.didJustFinish) skip(1);
+          }
+        }
+      );
+      setSound(newSound);
+      setCurrentIdx(index);
+      setIsPlaying(true);
+    } catch (e) {
+      Alert.alert("Error", "Could not play this file.");
+    }
   };
 
-  const toggle = async () => {
+  const togglePlayback = async () => {
     if (!sound) return;
-    playing ? await sound.pauseAsync() : await sound.playAsync();
-    setPlaying(!playing);
+    isPlaying ? await sound.pauseAsync() : await sound.playAsync();
+    setIsPlaying(!isPlaying);
   };
 
   const skip = (dir: number) => {
-    const nextIdx = (current + dir + MOCK_MUSIC.length) % MOCK_MUSIC.length;
-    play(nextIdx);
+    let next = currentIdx + dir;
+    if (next < 0) next = musicFiles.length - 1;
+    if (next >= musicFiles.length) next = 0;
+    playTrack(next);
   };
 
-  const [tabIndex, setTabIndex] = useState(0);
-  const routes = [{ key: "all", title: "Library" }, { key: "settings", title: "Settings" }];
+  const formatTime = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}:${sec.toString().padStart(2, "0")}`;
+  };
 
-  const renderScene = SceneMap({
-    all: () => (
-      <FlatList
-        data={MOCK_MUSIC}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingVertical: 20, paddingBottom: 150 }}
-        renderItem={({ item, index }) => {
-          const isActive = current === index;
-          return (
-            <TouchableOpacity 
-              style={[styles.trackCard, isActive && styles.activeTrack]} 
-              onPress={() => play(index)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.albumArt}>
-                <Ionicons name={isActive && playing ? "stats-chart" : "musical-notes"} size={24} color={activeColor} />
-              </View>
-              <View style={styles.info}>
-                <Text style={[styles.title, isActive && { color: activeColor }]}>{item.filename}</Text>
-                <Text style={styles.artist}>{item.artist}</Text>
-              </View>
-              <Ionicons name="ellipsis-horizontal" size={20} color={COLORS[theme].muted} />
-            </TouchableOpacity>
-          );
-        }}
-      />
-    ),
-    settings: () => (
-      <View style={{ flex: 1, alignItems: 'center', paddingTop: 30 }}>
-        <View style={styles.settingsRow}>
-          <Text style={styles.title}>Dark Mode</Text>
-          <Switch 
-            value={theme === "dark"} 
-            onValueChange={() => setTheme(theme === "dark" ? "light" : "dark")}
-            trackColor={{ false: "#767577", true: activeColor }}
-          />
-        </View>
+  /* --------------------------
+     SCENES
+  --------------------------- */
+  const LibraryScene = () => (
+    <FlatList
+      data={musicFiles}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={{ padding: 15, paddingBottom: 220 }}
+      ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.muted }]}>No music found on device.</Text>}
+      renderItem={({ item, index }) => (
+        <TouchableOpacity 
+          style={[styles.trackRow, { backgroundColor: colors.card, borderColor: currentIdx === index ? colors.accent : colors.border }]} 
+          onPress={() => playTrack(index)}
+        >
+          <View style={[styles.albumArt, { backgroundColor: colors.bg }]}>
+            <Ionicons name="musical-notes" size={20} color={currentIdx === index ? colors.accent : colors.muted} />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text numberOfLines={1} style={[styles.trackName, { color: colors.text }]}>{item.filename}</Text>
+            <Text style={{ color: colors.muted, fontSize: 12 }}>Local File • {formatTime(item.duration * 1000)}</Text>
+          </View>
+          {currentIdx === index && isPlaying && <Ionicons name="stats-chart" size={16} color={colors.accent} />}
+        </TouchableOpacity>
+      )}
+    />
+  );
+
+  const SettingsScene = () => (
+    <ScrollView style={{ flex: 1, padding: 20 }}>
+      <Text style={[styles.sectionLabel, { color: colors.accent }]}>APPEARANCE</Text>
+      <View style={[styles.settingItem, { backgroundColor: colors.card }]}>
+        <Text style={{ color: colors.text, fontSize: 16 }}>Dark Mode</Text>
+        <Switch 
+          value={themeMode === "dark"} 
+          onValueChange={() => setThemeMode(themeMode === "dark" ? "light" : "dark")}
+          trackColor={{ true: colors.accent }}
+        />
       </View>
-    ),
-  });
+
+      <Text style={[styles.sectionLabel, { color: colors.accent, marginTop: 30 }]}>ABOUT & LEGAL</Text>
+      {[
+        { label: "Privacy Policy", icon: "shield-checkmark-outline", url: "https://example.com/privacy" },
+        { label: "Terms & Conditions", icon: "document-text-outline", url: "https://example.com/terms" },
+        { label: "Contact Us", icon: "mail-outline", url: "mailto:support@eliteplayer.com" },
+      ].map((item, i) => (
+        <TouchableOpacity 
+          key={i} 
+          style={[styles.settingItem, { backgroundColor: colors.card, marginBottom: 8 }]}
+          onPress={() => Linking.openURL(item.url)}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name={item.icon as any} size={20} color={colors.muted} style={{ marginRight: 15 }} />
+            <Text style={{ color: colors.text, fontSize: 16 }}>{item.label}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+        </TouchableOpacity>
+      ))}
+      <Text style={[styles.version, { color: colors.muted }]}>Elite Player v1.0.0 Pro</Text>
+    </ScrollView>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style={theme === "dark" ? "light" : "dark"} />
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Player</Text>
-      </View>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <StatusBar style="light" />
+      <SafeAreaView style={{ backgroundColor: colors.header }}>
+        <View style={styles.header}>
+          <Ionicons name="headset" size={26} color="white" />
+          <Text style={styles.headerTitle}>Elite Player</Text>
+          <TouchableOpacity><Ionicons name="search" size={24} color="white" /></TouchableOpacity>
+        </View>
+      </SafeAreaView>
 
       <TabView
-        navigationState={{ index: tabIndex, routes }}
+        navigationState={{ index: tabIndex, routes: [{ key: 'lib', title: 'Library' }, { key: 'set', title: 'Settings' }] }}
         onIndexChange={setTabIndex}
         initialLayout={{ width }}
-        renderTabBar={(props) => (
-          <TabBar
-            {...props}
-            style={styles.tabBar}
-            indicatorStyle={styles.indicator}
-            labelStyle={[styles.label, { color: COLORS[theme].text }]}
-            activeColor={activeColor}
-            inactiveColor={COLORS[theme].muted}
+        renderTabBar={p => (
+          <TabBar {...p} 
+            style={{ backgroundColor: colors.bg, elevation: 0 }} 
+            indicatorStyle={{ backgroundColor: colors.accent, height: 3 }}
+            labelStyle={{ fontWeight: '800', fontSize: 13 }}
+            activeColor={colors.accent}
+            inactiveColor={colors.muted}
           />
         )}
-        renderScene={renderScene}
+        renderScene={SceneMap({ lib: LibraryScene, set: SettingsScene })}
       />
 
-      {current !== -1 && (
-        <View style={styles.miniPlayer}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-            <View style={styles.info}>
-               <Text style={styles.title} numberOfLines={1}>{MOCK_MUSIC[current].filename}</Text>
-               <Text style={styles.artist}>{MOCK_MUSIC[current].artist}</Text>
+      {/* PRO PLAYER CONSOLE */}
+      {currentIdx !== -1 && (
+        <View style={[styles.console, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.consoleInfo}>
+            <View style={[styles.albumLarge, { backgroundColor: colors.bg }]} />
+            <View style={{ flex: 1, marginLeft: 15 }}>
+              <Text numberOfLines={1} style={[styles.consoleTitle, { color: colors.text }]}>{musicFiles[currentIdx].filename}</Text>
+              <Text style={{ color: colors.muted }}>Now Playing</Text>
             </View>
-            <TouchableOpacity style={styles.playBtn} onPress={toggle}>
-              <Ionicons name={playing ? "pause" : "play"} size={28} color="#fff" />
-            </TouchableOpacity>
           </View>
-          
+
           <Slider
-            style={styles.slider}
+            style={{ width: '105%', height: 30, alignSelf: 'center' }}
             minimumValue={0}
             maximumValue={1}
-            value={pos / dur}
-            minimumTrackTintColor={activeColor}
-            maximumTrackTintColor={COLORS[theme].border}
-            thumbTintColor={activeColor}
-            onSlidingComplete={(v) => sound?.setPositionAsync(v * dur)}
+            value={position / duration}
+            minimumTrackTintColor={colors.accent}
+            maximumTrackTintColor={colors.border}
+            thumbTintColor={colors.accent}
+            onSlidingComplete={val => sound?.setPositionAsync(val * duration)}
           />
-          
+          <View style={styles.timeRow}>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>{formatTime(position)}</Text>
+            <Text style={{ color: colors.muted, fontSize: 11 }}>{formatTime(duration)}</Text>
+          </View>
+
           <View style={styles.controls}>
-             <TouchableOpacity onPress={() => skip(-1)}>
-               <Ionicons name="play-back" size={24} color={COLORS[theme].text} />
-             </TouchableOpacity>
-             <Text style={styles.artist}>{Math.floor(pos/60000)}:{(Math.floor(pos/1000)%60).toString().padStart(2,'0')}</Text>
-             <TouchableOpacity onPress={() => skip(1)}>
-               <Ionicons name="play-forward" size={24} color={COLORS[theme].text} />
-             </TouchableOpacity>
+            <TouchableOpacity><Ionicons name="shuffle" size={22} color={colors.muted} /></TouchableOpacity>
+            <TouchableOpacity onPress={() => skip(-1)}><Ionicons name="play-skip-back" size={30} color={colors.text} /></TouchableOpacity>
+            <TouchableOpacity style={[styles.playBtn, { backgroundColor: colors.accent }]} onPress={togglePlayback}>
+              <Ionicons name={isPlaying ? "pause" : "play"} size={32} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => skip(1)}><Ionicons name="play-skip-forward" size={30} color={colors.text} /></TouchableOpacity>
+            <TouchableOpacity><Ionicons name="repeat" size={22} color={colors.muted} /></TouchableOpacity>
           </View>
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
+  headerTitle: { color: 'white', fontSize: 22, fontWeight: '900' },
+  trackRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 15, marginBottom: 10, borderWidth: 1 },
+  albumArt: { width: 48, height: 48, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  trackName: { fontSize: 15, fontWeight: '700' },
+  emptyText: { textAlign: 'center', marginTop: 50, fontSize: 16 },
+  console: { position: 'absolute', bottom: 0, width: '100%', padding: 20, borderTopLeftRadius: 32, borderTopRightRadius: 32, borderWidth: 1, elevation: 20 },
+  consoleInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  albumLarge: { width: 50, height: 50, borderRadius: 12 },
+  consoleTitle: { fontSize: 16, fontWeight: '800' },
+  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -8 },
+  controls: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+  playBtn: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', elevation: 5 },
+  sectionLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 1, marginBottom: 10 },
+  settingItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderRadius: 16 },
+  version: { textAlign: 'center', marginTop: 40, fontSize: 12 }
+});
